@@ -1,0 +1,16 @@
+schema_version = "1.0.0"
+
+id = "loft_sweep"
+version = "0.1.0"
+name = "Loft & Sweep"
+tagline = "Live CAD-style lofts, sweeps, airfoils and aircraft starters"
+maintainer = "btyre9"
+type = "add-on"
+
+blender_version_min = "4.2.0"
+
+license = ["SPDX:GPL-3.0-or-later"]
+tags = ["Modeling", "Mesh"]
+
+[permissions]
+files = "Read airfoil .dat files and blueprint images you choose"
