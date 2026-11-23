@@ -1,4 +1,4 @@
-"""Loft & Sweep: CAD-style live surfaces for Blender.
+"""Aircraft Builder: CAD-style live surfaces and parametric aircraft for Blender.
 
 Lofts and sweeps stay linked to their source curves and rebuild whenever a
 curve moves or changes, much like Fusion 360's timeline.

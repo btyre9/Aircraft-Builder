@@ -1,10 +1,12 @@
-# Loft & Sweep
+# Aircraft Builder
 
-CAD-style **live** lofts and sweeps for Blender (4.2+, tested on 5.3), plus
-airfoils and aircraft starters. Surfaces stay linked to the curves they were
-made from and rebuild the moment a curve moves, scales, or is edited, much like
+Parametric aircraft for Blender (4.2+, tested on 5.3), built on CAD-style
+**live** lofts and sweeps. Surfaces stay linked to the curves they were made
+from and rebuild the moment a curve moves, scales, or is edited, much like
 Fusion 360's history. Find everything in the 3D Viewport sidebar (N) under
-**Loft & Sweep**.
+**Aircraft Builder**.
+
+(Formerly "Loft & Sweep". Files saved with the old version keep working.)
 
 ## Tools
 
@@ -51,6 +53,56 @@ Wings start at the centerline, buried inside the fuselage, so the wing-to-body
 intersection is always clean. The control curves live in the
 "Small Jet Controls" collection (hidden from renders).
 
+**Wing fairing**: the smooth bulge where the wing meets the belly (added to the
+Small Jet by default; **Add Wing Fairing** adds one to the active wing). It
+blends from the wing's cross-section, a little way out along the span, to a
+larger outline on the centerline. The blend has zero slope at both ends, so it
+leaves the wing without a crease and the mirrored halves meet smoothly. That
+smooth blend does the job of the four guide rails used in Fusion. Settings:
+
+- **Reach**: how far out along the wing it blends in; set it a little past the
+  side of the fuselage.
+- **Forward / Aft / Depth / Top**: the centerline outline, as fractions of the
+  wing chord. **Fullness** keeps it fuller farther out.
+- **Make Outline Editable** turns that outline into a smooth closed curve. Edit
+  its points in side view (numpad 3) to draw the belly profile yourself, like
+  sketching it on the symmetry plane in Fusion.
+
+The fairing follows the wing: change the airfoil, span, or sweep and it
+rebuilds with it.
+
+**Single Engine** builds a four-seat single-engine piston aircraft from a
+length (about 7 to 9 m for this class): high wing with struts, or low wing with
+more dihedral; fixed tricycle gear with wheel fairings; 2- or 3-blade propeller.
+Proportions: wingspan about 1.33 x length, aspect ratio 7.4 with a
+constant-chord inner wing and tapered outer panel, cabin about 0.14 x length
+wide, tail volumes 0.70 (horizontal) and 0.04 (vertical), propeller about
+0.23 x length with the gear keeping its tips off the ground. New live parts:
+
+- Fuselage rings are rounded boxes (Bezier handles longer than a circle's).
+- Struts and gear legs: a streamlined airfoil swept along a line. Edit the
+  line's end points to move them.
+- Propeller: one blade (airfoil swept out from the hub with 30° of twist and
+  tapering chord), repeated by an Array modifier around the "Propeller Hub"
+  empty. Edit the blade line to change the diameter.
+
+### Details on both builders
+
+- **Windshield and windows**: glass patches projected onto the fuselage from
+  outline curves, sitting a small gap above the skin with a dark glass
+  material. Each outline's plane sets the projection direction: side windows
+  are drawn in side view, the windshield outline is tilted to face the
+  windshield slope. Move or edit an outline (or reshape the fuselage) and the
+  glass follows. **Project Window** (Create panel) does the same for any body:
+  select the outline curve, then the body last.
+- **Dorsal fin**: a low strake from the spine up into the fin leading edge.
+- **Wheels**: tires with hub caps, lofted around the axle; on fixed gear they
+  sit inside the wheel fairings with the tire poking out below.
+- **Retractable gear** (Single Engine option; the Small Jet's gear): main gear
+  folds inward, nose gear folds forward, each leg pivoting at its top. Drag the
+  **Landing Gear** slider in the Aircraft panel (0 down, 1 up), or keyframe it
+  to animate. Left and right main gear are separate parts so each can swing.
+
 **Add Fuselage** and **Add Wing** add the parts on their own.
 **Set Up Blueprints** places side, top, and front images at real size with the
 nose at the origin. Crop each image so the aircraft touches the edges (side:
@@ -64,8 +116,12 @@ Axes: nose at the origin pointing -Y, body along +Y, span along X, Z up.
 python3 -m unittest tests.test_core          # geometry, no Blender needed
 /Applications/Blender.app/Contents/MacOS/Blender -b --factory-startup \
     --python tests/blender_smoke.py -- /tmp/renders   # live checks + preview renders
+/Applications/Blender.app/Contents/MacOS/Blender -b --factory-startup \
+    --python tests/blender_piston.py -- /tmp/renders  # single-engine builder checks
+/Applications/Blender.app/Contents/MacOS/Blender -b --factory-startup \
+    --python tests/blender_details.py -- /tmp/renders # windows, wheels, retractable gear
 /Applications/Blender.app/Contents/MacOS/Blender --command extension build \
-    --source-dir loft_sweep --output-dir dist         # installable zip
+    --source-dir aircraft_builder --output-dir dist   # installable zip
 ```
 
 `core.py` (loft, sweep, resampling, airfoils, mesh assembly) and `design.py`

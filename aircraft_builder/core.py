@@ -529,6 +529,143 @@ def sweep(
     return rows
 
 
+# --- wing-to-body fairing ----------------------------------------------------------
+
+def slice_columns(rows: list[list[Vec]], axis: int, value: float) -> list[Vec]:
+    """Cut a surface with the plane coordinate[axis] == value, one point per column."""
+    section = []
+    for j in range(len(rows[0])):
+        column = [row[j] for row in rows]
+        point = min(column, key=lambda p: abs(p[axis] - value))
+        for a, b in zip(column, column[1:]):
+            da, db = a[axis] - value, b[axis] - value
+            if da == 0.0 or da * db < 0:
+                point = lerp(a, b, da / (da - db) if da != db else 0.0)
+                break
+        section.append(point)
+    return section
+
+
+def _halves(points: list[Vec]) -> tuple[int, int]:
+    """Indices of the aft-most (max Y) and front-most (min Y) points of a closed section."""
+    aft = max(range(len(points)), key=lambda i: points[i][1])
+    front = min(range(len(points)), key=lambda i: points[i][1])
+    return aft, front
+
+
+def _chain(points: list[Vec], start: int, end: int) -> list[Vec]:
+    """Walk a closed loop forward from start to end (inclusive)."""
+    count = len(points)
+    steps = (end - start) % count
+    return [points[(start + k) % count] for k in range(steps + 1)]
+
+
+def _arc_fractions(chain: list[Vec]) -> list[float]:
+    lengths = [0.0]
+    for a, b in zip(chain, chain[1:]):
+        lengths.append(lengths[-1] + dist(a, b))
+    total = lengths[-1] or 1.0
+    return [value / total for value in lengths]
+
+
+def fairing_outline(
+    section: list[Vec], forward: float, aft: float, depth: float, top: float
+) -> list[Vec]:
+    """Centerline outline of a belly fairing around a wing section (same point order).
+
+    The section's chord is stretched forward and aft, the lower surface bulges
+    down by `depth` and the upper surface up by `top`. All four are fractions
+    of the section's chord. The bulge has round ends at the front and tapers
+    toward the back, like a real wing-to-body fairing.
+    """
+    aft_index, front_index = _halves(section)
+    y_le, y_te = section[front_index][1], section[aft_index][1]
+    chord = (y_te - y_le) or 1.0
+    first = _chain(section, aft_index, front_index)
+    second = _chain(section, front_index, aft_index)
+    first_is_upper = sum(p[2] for p in first) / len(first) >= sum(p[2] for p in second) / len(second)
+    upper = set((aft_index + k) % len(section) for k in range(len(first)))
+    if not first_is_upper:
+        upper = set(range(len(section))) - upper | {aft_index, front_index}
+
+    result = []
+    for i, (x, y, z) in enumerate(section):
+        u = max(0.0, min(1.0, (y - y_le) / chord))
+        bulge = math.sin(math.pi * u**0.75) ** (0.5 + 0.5 * u)
+        offset = top * bulge if i in upper else -depth * bulge
+        new_y = y_le - forward * chord + u * chord * (1 + forward + aft)
+        result.append((x, new_y, z + offset * chord))
+    return result
+
+
+def match_outline(section: list[Vec], outline: list[Vec]) -> list[Vec]:
+    """Resample a drawn closed outline so its points line up with the section's points."""
+    s_aft, s_front = _halves(section)
+    o_aft, o_front = _halves(outline)
+    s_first, s_second = _chain(section, s_aft, s_front), _chain(section, s_front, s_aft)
+    o_first, o_second = _chain(outline, o_aft, o_front), _chain(outline, o_front, o_aft)
+
+    def mean_z(chain: list[Vec]) -> float:
+        return sum(p[2] for p in chain) / len(chain)
+
+    # Pair the upper half with the upper half.
+    if (mean_z(s_first) >= mean_z(s_second)) != (mean_z(o_first) >= mean_z(o_second)):
+        o_first, o_second = o_second[::-1], o_first[::-1]
+    matched = {}
+    for s_chain, o_chain, start in ((s_first, o_first, s_aft), (s_second, o_second, s_front)):
+        for k, fraction in enumerate(_arc_fractions(s_chain)):
+            matched[(start + k) % len(section)] = polyline_point_at(o_chain, fraction)
+    return [matched.get(i, section[i]) for i in range(len(section))]
+
+
+def fairing_rows(
+    section: list[Vec],
+    outline: list[Vec],
+    steps: int,
+    x_outer: float,
+    fullness: float = 1.0,
+    x_center: float = 0.0,
+) -> list[list[Vec]]:
+    """Blend from the wing section at x_outer to the outline on the centerline (x_center).
+
+    The smoothstep blend has zero slope at both ends: the fairing leaves the
+    wing without a crease and meets the centerline square-on, so the mirrored
+    halves join smoothly.
+    """
+    rows = []
+    steps = max(2, steps)
+    for i in range(steps + 1):
+        s = i / steps
+        g = s * s * (3 - 2 * s)
+        if fullness != 1.0:
+            g = g ** (1.0 / fullness)
+        x = x_center + (x_outer - x_center) * (1 - s)
+        rows.append([(x, a[1] + (b[1] - a[1]) * g, a[2] + (b[2] - a[2]) * g) for a, b in zip(section, outline)])
+    return rows
+
+
+# --- window patches ------------------------------------------------------------------
+
+def radial_patch_points(boundary: list[Vec], rings: int) -> list[Vec]:
+    """Center point, then `rings` loops shrinking from the center out to the boundary."""
+    center = centroid(boundary)
+    points = [center]
+    for k in range(1, rings + 1):
+        points.extend(lerp(center, b, k / rings) for b in boundary)
+    return points
+
+
+def radial_patch_faces(count: int, rings: int, base: int = 0) -> list[tuple[int, ...]]:
+    """Faces for radial_patch_points: a triangle fan at the center, quads outward."""
+    faces = [(base, base + 1 + j, base + 1 + (j + 1) % count) for j in range(count)]
+    for k in range(1, rings):
+        inner, outer = base + 1 + (k - 1) * count, base + 1 + k * count
+        for j in range(count):
+            j2 = (j + 1) % count
+            faces.append((inner + j, outer + j, outer + j2, inner + j2))
+    return faces
+
+
 # --- mesh assembly ----------------------------------------------------------------
 
 CAP_TYPES = ("NONE", "FAN", "STRIP", "NGON")

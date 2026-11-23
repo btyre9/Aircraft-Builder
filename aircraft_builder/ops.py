@@ -91,6 +91,42 @@ class LSW_OT_sweep(Operator):
         return {"FINISHED"}
 
 
+class LSW_OT_window(Operator):
+    bl_idname = "lsw.window"
+    bl_label = "Project Window"
+    bl_description = (
+        "Project the selected closed curve's shapes onto the active body as glass. Draw the outline in a "
+        "plane outside the body facing it (side view for side windows); each shape becomes a window"
+    )
+    bl_options = {"REGISTER", "UNDO"}
+
+    mirror: BoolProperty(name="Mirror X", default=False, description="Repeat on the other side")
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return obj is not None and obj.type == "MESH"
+
+    def execute(self, context):
+        target = context.active_object
+        outlines = [o for o in context.selected_objects if o.type == "CURVE" and o is not target]
+        if not outlines:
+            self.report({"ERROR"}, "Select an outline curve, then the body last (active)")
+            return {"CANCELLED"}
+        created = None
+        for outline in outlines:
+            created = build.new_result(f"{outline.name} Glass", "WINDOW", context.collection)
+            s = created.lsw
+            s.resolution, s.steps, s.mirror_x = 40, 5, self.mirror
+            s.target, s.outline = target, outline
+            created.data.materials.append(build.glass_material())
+            build.rebuild(created)
+            if s.status:
+                self.report({"WARNING"}, s.status)
+        _select_only(context, created)
+        return {"FINISHED"}
+
+
 class LSW_OT_list_edit(Operator):
     bl_idname = "lsw.list_edit"
     bl_label = "Edit List"
@@ -205,13 +241,20 @@ class LSW_OT_small_jet(Operator):
     tail: EnumProperty(name="Tail", items=[("T", "T-Tail", "Horizontal tail on top of the fin"),
                                            ("CONVENTIONAL", "Conventional", "Horizontal tail on the tail cone")])
     engines: BoolProperty(name="Rear Engines", default=True)
+    fairing: BoolProperty(name="Wing Fairing", default=True,
+                          description="Belly fairing that blends the wing root into the fuselage")
+    gear: EnumProperty(name="Gear", items=[("RETRACTABLE", "Retractable", "Tricycle gear with a Gear slider"),
+                                           ("NONE", "None", "No landing gear")])
+    windows: BoolProperty(name="Windows", default=True, description="Windshield and oval cabin windows")
+    dorsal: BoolProperty(name="Dorsal Fin", default=True, description="Strake from the spine into the fin")
 
     def invoke(self, context, event):
         return context.window_manager.invoke_props_dialog(self)
 
     def execute(self, context):
         jet, objects = aircraft.build_small_jet(
-            context, self.length, self.span, self.diameter, self.tail, self.engines
+            context, self.length, self.span, self.diameter, self.tail, self.engines, self.fairing,
+            self.gear, self.windows, self.dorsal,
         )
         problems = [o.name for o in objects if o.lsw.status]
         if problems:
@@ -221,6 +264,49 @@ class LSW_OT_small_jet(Operator):
             {"INFO"},
             f"Span {s['Wingspan (m)']:.1f} m, wing area {s['Wing area (m²)']:.1f} m², "
             f"body diameter {s['Fuselage diameter (m)']:.2f} m",
+        )
+        return {"FINISHED"}
+
+
+class LSW_OT_single_piston(Operator):
+    bl_idname = "lsw.single_piston"
+    bl_label = "Single Engine"
+    bl_description = (
+        "Build a live four-seat single-engine piston aircraft (high wing with struts, or low wing) "
+        "with realistic proportions"
+    )
+    bl_options = {"REGISTER", "UNDO"}
+
+    length: FloatProperty(name="Length", default=8.3, min=2.0, max=20.0, unit="LENGTH",
+                          description="Spinner to tail. Four-seat light aircraft are about 7 to 9 m")
+    span: FloatProperty(name="Wingspan", default=0.0, min=0.0, max=30.0, unit="LENGTH",
+                        description="0 picks 1.33 x length")
+    wing: EnumProperty(name="Wing", items=[("HIGH", "High Wing", "Wing on top of the cabin, braced by struts"),
+                                           ("LOW", "Low Wing", "Wing under the cabin with more dihedral")])
+    gear: EnumProperty(name="Gear", items=[
+        ("FIXED", "Fixed", "Tricycle gear with wheel fairings"),
+        ("RETRACTABLE", "Retractable", "Tricycle gear that folds away with the Gear slider"),
+        ("NONE", "None", "No landing gear"),
+    ])
+    blades: EnumProperty(name="Blades", items=[("2", "2 Blades", ""), ("3", "3 Blades", "")])
+    windows: BoolProperty(name="Windows", default=True, description="Windshield and side windows")
+    dorsal: BoolProperty(name="Dorsal Fin", default=True, description="Strake from the spine into the fin")
+
+    def invoke(self, context, event):
+        return context.window_manager.invoke_props_dialog(self)
+
+    def execute(self, context):
+        plan, objects = aircraft.build_single_piston(
+            context, self.length, self.span, self.wing, self.gear, int(self.blades), self.windows, self.dorsal
+        )
+        problems = [o.name for o in objects if o.lsw.status]
+        if problems:
+            self.report({"WARNING"}, "Some parts failed: " + ", ".join(problems))
+        s = plan.summary
+        self.report(
+            {"INFO"},
+            f"Span {s['Wingspan (m)']:.1f} m, wing area {s['Wing area (m²)']:.1f} m², "
+            f"propeller {s['Propeller diameter (m)']:.2f} m",
         )
         return {"FINISHED"}
 
@@ -276,6 +362,66 @@ class LSW_OT_add_fuselage(Operator):
         return {"FINISHED"}
 
 
+class LSW_OT_add_fairing(Operator):
+    bl_idname = "lsw.add_fairing"
+    bl_label = "Add Wing Fairing"
+    bl_description = (
+        "Add a live belly fairing that blends the active wing's root into the fuselage. "
+        "The wing must be a sweep with its span along X"
+    )
+    bl_options = {"REGISTER", "UNDO"}
+
+    reach: FloatProperty(name="Reach", default=0.0, min=0.0, unit="LENGTH",
+                         description="How far out along the wing the fairing blends in. 0 picks 45% of the "
+                                     "root chord; set it a little past the side of the fuselage")
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return obj is not None and obj.type == "MESH" and obj.lsw.kind == "SWEEP"
+
+    def execute(self, context):
+        wing = context.active_object
+        depsgraph = context.evaluated_depsgraph_get()
+        try:
+            reach = self.reach or 0.45 * aircraft.root_chord(wing, depsgraph)
+        except ValueError as exc:
+            self.report({"ERROR"}, str(exc))
+            return {"CANCELLED"}
+        obj = aircraft.add_fairing(wing, wing.users_collection[0], reach)
+        build.rebuild(obj)
+        if obj.lsw.status:
+            self.report({"WARNING"}, obj.lsw.status)
+        _select_only(context, obj)
+        return {"FINISHED"}
+
+
+class LSW_OT_fairing_outline(Operator):
+    bl_idname = "lsw.fairing_outline"
+    bl_label = "Make Outline Editable"
+    bl_description = (
+        "Create a closed curve from the fairing's current centerline shape. Edit its points in side "
+        "view (numpad 3) to reshape the fairing, like sketching the belly profile in Fusion"
+    )
+    bl_options = {"REGISTER", "UNDO"}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return obj is not None and obj.lsw.kind == "FAIRING" and obj.lsw.wing is not None
+
+    def execute(self, context):
+        fairing = context.active_object
+        try:
+            curve = aircraft.editable_outline(fairing, context.evaluated_depsgraph_get())
+        except ValueError as exc:
+            self.report({"ERROR"}, str(exc))
+            return {"CANCELLED"}
+        build.rebuild(fairing)
+        self.report({"INFO"}, f"Edit {curve.name} in side view to reshape the fairing")
+        return {"FINISHED"}
+
+
 class LSW_OT_blueprints(Operator):
     bl_idname = "lsw.blueprints"
     bl_label = "Set Up Blueprints"
@@ -317,13 +463,17 @@ class LSW_OT_blueprints(Operator):
 CLASSES = (
     LSW_OT_loft,
     LSW_OT_sweep,
+    LSW_OT_window,
     LSW_OT_list_edit,
     LSW_OT_rebuild,
     LSW_OT_freeze,
     LSW_OT_add_airfoil,
     LSW_OT_small_jet,
+    LSW_OT_single_piston,
     LSW_OT_add_wing,
     LSW_OT_add_fuselage,
+    LSW_OT_add_fairing,
+    LSW_OT_fairing_outline,
     LSW_OT_blueprints,
 )
 

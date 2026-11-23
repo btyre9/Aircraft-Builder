@@ -29,6 +29,14 @@ def _is_shape(self, obj):
     return obj.type in {"CURVE", "MESH"} and obj != self.id_data
 
 
+def _is_mesh(self, obj):
+    return obj.type == "MESH" and obj != self.id_data
+
+
+def _is_sweep(self, obj):
+    return obj.type == "MESH" and obj.lsw.kind == "SWEEP" and obj != self.id_data
+
+
 CAPS = [
     ("NONE", "Open", "Leave the end open"),
     ("FAN", "Fan", "Triangles to a center point (round ends, noses)"),
@@ -43,9 +51,34 @@ class LSW_ObjectRef(PropertyGroup):
 
 class LSW_Settings(PropertyGroup):
     kind: EnumProperty(
-        items=[("NONE", "None", ""), ("LOFT", "Loft", ""), ("SWEEP", "Sweep", "")],
+        items=[("NONE", "None", ""), ("LOFT", "Loft", ""), ("SWEEP", "Sweep", ""), ("FAIRING", "Fairing", ""),
+               ("WINDOW", "Window", "")],
         default="NONE",
     )
+    # Windows
+    target: PointerProperty(name="Body", type=bpy.types.Object, poll=_is_mesh, update=_rebuild,
+                            description="Surface the window outlines are projected onto")
+    offset: FloatProperty(name="Gap", default=0.01, min=0.0, soft_max=0.05, unit="LENGTH", update=_rebuild,
+                          description="How far the glass sits above the body surface")
+    # Wing fairing
+    wing: PointerProperty(name="Wing", type=bpy.types.Object, poll=_is_sweep, update=_rebuild,
+                          description="Swept wing (span along X) to fair into the body")
+    outline: PointerProperty(name="Outline Curve", type=bpy.types.Object, poll=_is_shape, update=_rebuild,
+                             description="Optional closed curve drawn in side view: the fairing's shape on the "
+                                         "centerline. Empty uses the sliders below")
+    reach: FloatProperty(name="Reach", default=1.0, min=0.01, unit="LENGTH", update=_rebuild,
+                         description="How far out along the wing the fairing blends in. Set it a little "
+                                     "past the side of the fuselage")
+    forward: FloatProperty(name="Forward", default=0.35, min=0.0, soft_max=2.0, update=_rebuild,
+                           description="Extension ahead of the wing leading edge, as a fraction of chord")
+    aft: FloatProperty(name="Aft", default=0.5, min=0.0, soft_max=2.0, update=_rebuild,
+                       description="Extension behind the trailing edge, as a fraction of chord")
+    depth: FloatProperty(name="Depth", default=0.26, min=0.0, soft_max=1.0, update=_rebuild,
+                         description="Bulge below the wing on the centerline, as a fraction of chord")
+    top: FloatProperty(name="Top", default=0.08, min=0.0, soft_max=1.0, update=_rebuild,
+                       description="Bulge above the wing on the centerline, as a fraction of chord")
+    fullness: FloatProperty(name="Fullness", default=1.0, min=0.5, max=1.8, update=_rebuild,
+                            description="Higher keeps the fairing fuller farther out along the wing")
     # Loft
     profiles: CollectionProperty(type=LSW_ObjectRef)
     profile_index: IntProperty()

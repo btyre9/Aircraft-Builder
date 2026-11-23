@@ -11,10 +11,10 @@ from pathlib import Path
 import bpy
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-import loft_sweep  # noqa: E402
-from loft_sweep import aircraft, build  # noqa: E402
+import aircraft_builder  # noqa: E402
+from aircraft_builder import aircraft, build  # noqa: E402
 
-loft_sweep.register()
+aircraft_builder.register()
 failures = []
 
 
@@ -81,6 +81,48 @@ check(wing.dimensions.z > thin + 0.05, f"NACA 2412 -> 2420 thickens wing: {thin:
 airfoil.lsw_airfoil.naca = "2412"
 context.view_layer.update()
 
+# --- Wing fairing -----------------------------------------------------------------
+fairing = bpy.data.objects["Wing Fairing"]
+check(fairing.lsw.kind == "FAIRING" and not fairing.lsw.status, f"fairing built: {fairing.lsw.status!r}")
+fairing_eval = fairing.evaluated_get(context.evaluated_depsgraph_get())
+fair_min_z = min((fairing_eval.matrix_world @ v.co).z for v in fairing_eval.data.vertices)
+body_min_z = min((fuselage.matrix_world @ v.co).z for v in fuselage.data.vertices)
+check(fair_min_z < body_min_z - 0.02, f"fairing bulges below the belly: {fair_min_z:.3f} < {body_min_z:.3f}")
+check(abs(fairing_eval.dimensions.x - 2 * fairing.lsw.reach) < 1e-3, f"mirrored fairing width {fairing_eval.dimensions.x:.3f}")
+# Its outer edge sits exactly on the wing surface.
+outer = [fairing.matrix_world @ v.co for v in fairing.data.vertices if abs(v.co.x - fairing.lsw.reach) < 1e-6]
+_, section = build.wing_section(wing, context.evaluated_depsgraph_get(), fairing.lsw.reach)
+gap = max(min((p - type(p)(q)).length for q in section) for p in outer)
+check(len(outer) == len(section) and gap < 1e-5, f"fairing edge lies on the wing (gap {gap:.2e})")
+
+# Follows the wing: a thicker airfoil makes a deeper fairing.
+before = fairing.dimensions.z
+airfoil.lsw_airfoil.naca = "2420"
+context.view_layer.update()
+check(fairing.dimensions.z > before + 0.02, f"fairing follows wing edits: {before:.3f} -> {fairing.dimensions.z:.3f}")
+airfoil.lsw_airfoil.naca = "2412"
+context.view_layer.update()
+
+# Sliders and editable outline.
+default_depth = fairing.lsw.depth
+fairing.lsw.depth = default_depth + 0.2
+context.view_layer.update()
+check(fairing.dimensions.z > before + 0.1, f"depth slider deepens fairing: {before:.3f} -> {fairing.dimensions.z:.3f}")
+fairing.lsw.depth = default_depth
+context.view_layer.update()
+with context.temp_override(active_object=fairing, object=fairing):
+    result = bpy.ops.lsw.fairing_outline()
+outline_curve = fairing.lsw.outline
+check(result == {"FINISHED"} and outline_curve is not None and not fairing.lsw.status,
+      f"outline curve made editable: {fairing.lsw.status!r}")
+shape = fairing.dimensions.z
+lowest = min(outline_curve.data.splines[0].points, key=lambda p: p.co.z)
+lowest.co.z -= 0.4
+context.view_layer.update()
+check(fairing.dimensions.z > shape + 0.1, f"dragging an outline point reshapes it: {shape:.3f} -> {fairing.dimensions.z:.3f}")
+lowest.co.z += 0.4
+context.view_layer.update()
+
 # --- Generic operators -------------------------------------------------------------
 scratch = bpy.data.collections.new("Scratch")
 context.scene.collection.children.link(scratch)
@@ -107,6 +149,19 @@ sweep_obj = context.view_layer.objects.active
 check(result == {"FINISHED"} and sweep_obj.lsw.path == path and sweep_obj.lsw.profile == profile,
       "Sweep Selected picks profile and path")
 check(not sweep_obj.lsw.status and len(sweep_obj.data.vertices) > 100, f"pipe sweep: {sweep_obj.lsw.status!r}")
+
+wing_alone = aircraft.build_wing(context, (0.0, 40.0, 0.0), 5.0, 2.0, 0.8, 5.0, 3.0, "2412")
+with context.temp_override(active_object=wing_alone, object=wing_alone):
+    result = bpy.ops.lsw.add_fairing()
+added = context.view_layer.objects.active
+check(result == {"FINISHED"} and added.lsw.kind == "FAIRING", "Add Wing Fairing on a standalone wing")
+check(abs(added.lsw.reach - 0.9) < 0.005, f"default reach is 45% of root chord: {added.lsw.reach:.4f}")
+check(not added.lsw.status, f"standalone fairing builds: {added.lsw.status!r}")
+for name in ("Wing Controls", "Wing"):
+    group = bpy.data.collections[name]
+    for obj in list(group.objects):
+        bpy.data.objects.remove(obj)
+    bpy.data.collections.remove(group)
 
 with context.temp_override(selected_objects=[sweep_obj], active_object=sweep_obj):
     bpy.ops.lsw.freeze()
@@ -141,7 +196,7 @@ if args:
         ("junction", (-0.55, -0.4, -0.35), 50),
     ):
         length = math.sqrt(sum(c * c for c in direction))
-        distance = 9.0 if name == "junction" else 32.0
+        distance = {"junction": 9.0, "top": 40.0}.get(name, 32.0)
         focus = (1.2, 7.0, -0.4) if name == "junction" else target
         camera.location = tuple(focus[i] + direction[i] / length * distance for i in range(3))
         look = bpy.data.objects.get("Look") or bpy.data.objects.new("Look", None)

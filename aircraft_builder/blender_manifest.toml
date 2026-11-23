@@ -1,9 +1,9 @@
 schema_version = "1.0.0"
 
-id = "loft_sweep"
-version = "0.1.0"
-name = "Loft & Sweep"
-tagline = "Live CAD-style lofts, sweeps, airfoils and aircraft starters"
+id = "aircraft_builder"
+version = "0.4.0"
+name = "Aircraft Builder"
+tagline = "Live CAD-style lofts and sweeps, and parametric aircraft"
 maintainer = "btyre9"
 type = "add-on"
 
